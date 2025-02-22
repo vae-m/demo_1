@@ -1,0 +1,835 @@
+import streamlit as st 
+ 
+# 初始化会话状态 
+if 'logged_in' not in st.session_state: 
+    st.session_state.logged_in  = False 
+    st.session_state.username  = None 
+ 
+def check_login(username, password):
+    """从secrets.toml 验证用户"""
+    valid_users = st.secrets.users  
+    return username in valid_users and valid_users[username] == password 
+ 
+def login_page():
+    """登录界面"""
+    st.title("LOGIN")
+    with st.form("login_form"): 
+        username = st.text_input(" 用户名")
+        password = st.text_input(" 密码", type="password")
+        if st.form_submit_button(" 登录"):
+            if check_login(username, password):
+                st.session_state.logged_in  = True 
+                st.session_state.username  = username 
+                st.rerun()   # 刷新页面跳转 
+            else:
+                st.error(" 认证失败")
+ 
+def main_page():
+    """主功能界面"""
+    # 设置页面配置
+    st.set_page_config(page_title="社交网络舆情分析系统", page_icon=":guardsman:", layout="wide")
+
+    # 显示背景图片
+    st.image("assets/your_name.jpg", use_container_width=True)
+
+    # 页面标题
+    st.title("社交网络舆情分析系统")
+
+    # 系统介绍
+    st.markdown("""
+    欢迎使用 **社交网络舆情分析系统**。该系统可以帮助您：
+    - 上传社交网络数据文件（如 CSV 格式）
+    - 查看数据并进行预处理
+    - 生成词云，展示文本数据的关键词
+    - 进行情感分析，了解数据中的情感倾向
+    - 使用主题建模（LDA 或 KMeans）对数据进行深度分析
+    - 查看舆情地域分布
+    
+    请选择左侧菜单中的功能，开始您的分析之旅！
+""")
+def main(): 
+    # 主程序逻辑 
+    if not st.session_state.logged_in: 
+        login_page()
+        st.stop()   # 阻止未登录访问 
+    else:
+        main_page()
+
+if __name__ == "__main__":
+    main()       
+
+import streamlit as st
+import pandas as pd
+import datetime
+
+# 权限验证（所有子页面都需要添加）
+if not st.session_state.get('logged_in'):
+    st.error("请先登录")
+    st.stop()   # 阻止继续加载
+
+def handle_file_upload(file):
+    """处理上传的文件并保存到 session_state """
+    try:
+        data = pd.read_csv(file)
+        st.session_state.data = data
+        return data
+    except Exception as e:
+        st.error(f"文件解析失败：{e}")
+        st.stop()
+
+# 上传 CSV 文件
+uploaded_file = st.file_uploader("选择一个CSV文件(请确定存在review列和ip列)", type=["csv"])
+
+if uploaded_file is not None:
+    # 处理上传的文件
+    data = handle_file_upload(uploaded_file)
+    st.success("文件上传成功！")
+    # 保存上传历史
+    if 'upload_history' not in st.session_state:
+        st.session_state.upload_history = []
+    # 保存文件名和上传时间
+    file_info = {
+        "文件名": uploaded_file.name,
+        "上传时间": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    }
+    st.session_state.upload_history.insert(0, file_info)  # 插入到历史记录开头
+else:
+    st.info("请上传一个 CSV 文件进行查看。")
+
+# 显示上传历史
+st.subheader("文件上传历史")
+if 'upload_history' in st.session_state:
+    for idx, file_info in enumerate(st.session_state.upload_history):
+        st.write(f"**文件 {idx + 1}**")
+        st.write(f"文件名：{file_info['文件名']}")
+        st.write(f"上传时间：{file_info['上传时间']}")
+        st.divider()
+else:
+    st.info("暂无历史记录")
+
+import streamlit as st
+import pandas as pd
+
+# 权限验证（所有子页面都需要添加）
+if not st.session_state.get('logged_in'): 
+    st.error(" 请先登录")
+    st.stop()   # 阻止继续加载 
+    
+# 获取已上传的数据
+if 'data' in st.session_state:
+    data = st.session_state.data
+    st.write("### 数据实时展示：")
+    st.dataframe(data, use_container_width=True)
+else:
+    st.warning("请先上传文件。")
+
+import streamlit as st 
+import streamlit_echarts as st_echarts 
+import numpy as np 
+from sklearn.feature_extraction.text  import TfidfVectorizer 
+from sklearn.decomposition  import LatentDirichletAllocation 
+from sklearn.cluster  import KMeans 
+from sklearn.manifold  import TSNE 
+import jieba 
+import pandas as pd 
+ 
+# 权限验证 
+if not st.session_state.get('logged_in'): 
+    st.error(" 请先登录")
+    st.stop() 
+ 
+# 加载自定义词典 
+jieba.load_userdict("custom_dict.txt") 
+ 
+if 'data' in st.session_state: 
+    data = st.session_state.data  
+    st.write("###  主题建模分析系统")
+ 
+    # 加载中文停用词 
+    with open("stopwords.txt",  "r", encoding="utf-8") as f:
+        stopwords = [line.strip() for line in f.readlines()] 
+ 
+    # 中文分词预处理 
+    data['processed'] = data['review'].fillna('').apply(
+        lambda x: " ".join([word for word in jieba.cut(x)  if word not in stopwords and len(word) > 1])
+    )
+ 
+    # 特征向量化函数 
+    def vectorize_text(data, max_df=0.95, min_df=2):
+        vectorizer = TfidfVectorizer(max_df=max_df, min_df=min_df)
+        X = vectorizer.fit_transform(data['processed']) 
+        return X.astype(np.float32),  vectorizer.get_feature_names_out() 
+ 
+    method = st.radio(" 选择分析方法", ["LDA主题模型", "KMeans聚类分析"])
+ 
+    # 高级参数配置 
+    with st.expander(" 高级参数配置"):
+        max_df = st.slider(" 最大文档频率", 0.7, 1.0, 0.95)
+        min_df = st.slider(" 最小文档频率", 1, 10, 2)
+        use_tsne = st.checkbox(" 启用t-SNE降维可视化(仅k-means时可选)")
+        if method == "LDA主题模型":
+            num_topics = st.slider(" 主题数量", 2, 10, 5)
+        else:
+            num_clusters = st.slider(" 聚类数量", 2, 10, 5)
+        # 修改后的LDA主题可视化部分 
+    if method == "LDA主题模型":
+        with st.spinner(' 主题建模中...'):
+            X, features = vectorize_text(data, max_df, min_df)
+            lda = LatentDirichletAllocation(n_components=num_topics, random_state=42)
+            lda.fit(X) 
+    
+            st.write("###  主题关键词分布")
+            topic_options = []
+            for idx, topic in enumerate(lda.components_): 
+                top_indices = topic.argsort()[-10:][::-1] 
+                top_words = [features[i] for i in top_indices]
+                # 关键修改点：添加round函数处理小数位数 
+                weights = [round(float(topic[i]), 3) for i in top_indices]  # 三位小数处理 
+    
+                # 归一化处理 
+                weights = np.array(weights)  / np.sum(weights) 
+                weights = [round(w, 3) for w in weights]  # 再次四舍五入
+                
+                option = {
+                    "title": {"text": f"主题 {idx + 1}"},
+                    "tooltip": {
+                        "trigger": "axis",
+                        "formatter": "{b}: {c}"  # 提示框显示原始值 
+                    },
+                    "xAxis": {"type": "value"},
+                    "yAxis": {
+                        "type": "category",
+                        "data": top_words,
+                        "axisLabel": {
+                            "interval": 0,
+                            "formatter": "{value}",
+                            "fontSize": 12 
+                        }
+                    },
+                    "series": [{
+                        "type": "bar",
+                        "data": weights,
+                        "label": {
+                            "show": True,
+                            "position": 'right',
+                            "formatter": "{@[1]}"  # 显示三位小数 
+                        }
+                    }],
+                    "grid": {
+                        "left": "25%",
+                        "right": "15%",  # 增加右侧空间 
+                        "bottom": "3%",
+                        "containLabel": True 
+                    }
+                }
+                topic_options.append(option) 
+    
+            # 分列显示主题 
+            cols = st.columns(2) 
+            for idx, option in enumerate(topic_options):
+                with cols[idx % 2]:
+                    st_echarts.st_echarts( 
+                        options=option,
+                        height=f"{len(option['yAxis']['data'])*30 + 100}px",
+                        key=f"topic{idx}"
+                    )
+ 
+    elif method == "KMeans聚类分析":
+        with st.spinner(' 聚类分析中...'):
+            X, features = vectorize_text(data, max_df, min_df)
+            kmeans = KMeans(n_clusters=num_clusters, random_state=42)
+            cluster_labels = kmeans.fit_predict(X) 
+ 
+            # 聚类关键词展示 
+            cluster_keywords = []
+            for idx in range(num_clusters):
+                cluster_words = [features[i] for i in kmeans.cluster_centers_[idx].argsort()[-10:][::-1]] 
+                cluster_keywords.append(f"** 聚类 {idx + 1} 关键词**：{', '.join(cluster_words)}")
+ 
+            with st.expander(" 查看聚类关键词"):
+                cols = st.columns(2) 
+                for idx in range(num_clusters):
+                    with cols[idx % 2]:
+                        st.markdown(cluster_keywords[idx]) 
+ 
+            # t-SNE 可视化 
+            if use_tsne and X.shape[0]  > 10:
+                st.write("###  聚类分布可视化")
+                tsne = TSNE(n_components=2, random_state=42)
+                embeddings = tsne.fit_transform(X.toarray()) 
+ 
+                scatter_data = []
+                for i in range(len(embeddings)):
+                    scatter_data.append({ 
+                        "value": [
+                            float(embeddings[i, 0]),  # 显式转换类型 
+                            float(embeddings[i, 1])
+                        ],
+                        "itemStyle": {"color": f"hsl({(cluster_labels[i] * 360) // num_clusters}, 60%, 60%)"}
+                    })
+ 
+                tsne_option = {
+                    "title": {"text": "t-SNE 聚类分布图"},
+                    "xAxis": {"type": "value"},
+                    "yAxis": {"type": "value"},
+                    "series": [{
+                        "type": "scatter",
+                        "data": scatter_data,
+                        "itemStyle": {"opacity": 0.6},
+                        "symbolSize": 10 
+                    }]
+                }
+                st_echarts.st_echarts(options=tsne_option,  height="600px")
+else:
+    st.warning("请先上传文件。")
+
+import streamlit as st
+from wordcloud import WordCloud
+import matplotlib.pyplot  as plt
+import jieba
+import jieba.analyse 
+
+# 使用 st.cache_resource  缓存 CampusWordFilter 类的实例，避免重复初始化
+@st.cache_resource 
+def get_campus_word_filter():
+    return CampusWordFilter()
+
+# 使用 st.cache_data  缓存加载停用词的操作，避免重复读取文件
+@st.cache_data 
+def load_stopwords(path):
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            return set(f.read().splitlines()) 
+    except FileNotFoundError:
+        st.warning(f"   未找到停用词文件 {path}，启用基础过滤")
+        return set(["的", "了", "是", "在"])
+
+# 权限验证模块
+def authenticate():
+    if not st.session_state.get('logged_in'): 
+        st.error("   请先登录系统")
+        st.stop() 
+
+# 高校舆情专用过滤模块
+class CampusWordFilter:
+    def __init__(self):
+        # 核心过滤配置（建议保存为配置文件）
+        self.base_stopwords  = load_stopwords("stopwords.txt") 
+        self.sensitive_words  = ["广告"]  # 可扩展
+        self.education_keywords  = ["教学质量", "课程改革", "科研成果", "校园文化"]  # 重点保留词
+
+    def filter_text(self, text):
+        # 使用TF-IDF提取教育领域关键词
+        keywords = jieba.analyse.extract_tags(text, 
+                                              topK=50,
+                                              allowPOS=('n', 'ns', 'vn', 'nz'))
+
+        # 双重过滤机制
+        words = [word for word in jieba.cut(text) 
+                 if len(word) > 1
+                 and word not in self.base_stopwords 
+                 and word not in self.sensitive_words 
+                 and word in keywords + self.education_keywords] 
+
+        return " ".join(words)
+
+# 使用 st.cache_data  缓存生成词云的操作，避免重复生成
+@st.cache_data 
+def generate_campus_wordcloud(filtered_text, max_words):
+    if not filtered_text:
+        st.warning("   有效文本内容为空")
+        return None
+
+    try:
+        # 字体兼容方案（Windows/macOS）
+        font_paths = [
+            "C:/Windows/Fonts/msyh.ttc",   # Windows
+            "/System/Library/Fonts/Supplemental/Songti.ttc"   # macOS
+        ]
+
+        for fp in font_paths:
+            try:
+                wc = WordCloud(
+                    font_path=fp,
+                    width=800,
+                    height=400,
+                    collocations=False,  # 禁用词组重复
+                    background_color='white',
+                    max_words=max_words
+                ).generate(filtered_text)
+                break
+            except FileNotFoundError:
+                continue
+        else:
+            st.warning("   未找到系统字体，使用默认字体")
+            wc = WordCloud().generate(filtered_text)
+
+        # 生成专业可视化图形
+        fig, ax = plt.subplots(figsize=(12,  6))
+        ax.imshow(wc,  interpolation='bilinear')
+        ax.axis('off') 
+        plt.tight_layout() 
+        return fig
+
+    except Exception as e:
+        st.error(f"   生成失败：{str(e)}")
+        return None
+
+# 主程序
+def main():
+    authenticate()
+
+    # 界面布局优化
+    st.header("   词云生成")
+
+    if 'data' not in st.session_state: 
+        st.warning("   请先上传数据文件")
+        return
+
+    data = st.session_state.data 
+    if data.empty: 
+        st.error("   数据集为空")
+        return
+
+    with st.expander("🔧   高级设置"):
+        col1, col2 = st.columns(2) 
+        with col1:
+            min_word_length = st.radio( 
+                "选择最小词长",
+                options=[2, 3, 4],
+                horizontal=True,  # 水平排列
+                index=0,
+                format_func=lambda x: f"{x}字符",
+                help="过滤低于此长度的词语"
+            )
+        with col2:
+            max_words = st.slider( 
+                "最大显示词数",
+                min_value=20, max_value=100, value=50,
+                help="限制展示结果中最多显示的词语数量"
+            )
+
+    # 添加开始按钮
+    if st.button("  开始"):
+        # 数据预处理流程
+        try:
+            processor = get_campus_word_filter()
+            processed_text = processor.filter_text("    ".join(data['review'].dropna()))
+
+            # if st.checkbox("   显示预处理文本"):
+            #     st.code(processed_text[:1000]    + "...")
+
+            # 生成词云
+            if fig := generate_campus_wordcloud(processed_text, max_words):
+                st.pyplot(fig) 
+
+                # # 扩展分析功能
+                # if st.button("   生成分析报告"):
+                #     generate_analysis_report(processed_text)
+
+        except KeyError:
+            st.error("   数据集中缺少'review'字段")
+
+# def generate_analysis_report(text):
+#     # 可扩展添加词频统计、情感分析等功能
+#     st.success("   分析报告生成中...")
+
+if __name__ == "__main__":
+    main()
+
+import streamlit as st
+import pandas as pd
+import streamlit_echarts as ste
+from snownlp import SnowNLP
+import matplotlib.pyplot as plt
+from wordcloud import WordCloud
+import numpy as np
+import io
+
+
+
+# 数据处理函数
+@st.cache_data
+def process_data(data):
+    # 删除含有 NaN 的行
+    data = data.dropna(subset=["review"])
+    
+    # 筛选评论为字符串类型的数据
+    data = data[data["review"].map(lambda x: isinstance(x, str))]
+    
+    # 删除空字符串和无效数据
+    data["review"] = data["review"].apply(lambda x: x.strip())
+    data = data[data["review"] != ""]  # 删除空字符串
+    
+    return data
+
+# 情感分析函数
+def calculate_sentiment(df):
+    # 计算情感得分
+    df["sentiment"] = df["review"].apply(handle_sentiment)
+    
+    # 修饰情感分数
+    bins = [0, 0.4, 0.6, 1]
+    labels = ["消极", "中性", "积极"]
+    df["sentiment_label"] = pd.cut(
+        df["sentiment"], bins=bins, labels=labels, include_lowest=True
+    )
+    return df
+
+def handle_sentiment(x):
+    try:
+        return SnowNLP(x).sentiments
+    except:
+        return 0.5  # 自定义默认值
+
+# 生成情感饼图
+def build_pie_chart(df):
+    sentiment_counts = (
+        df["sentiment_label"].value_counts(normalize=True).mul(100).round(1)
+    )
+
+    # 动态生成数据
+    data = []
+    for label in ["积极", "中性", "消极"]:
+        value = sentiment_counts.get(label, 0)
+        item = {
+            "value": value,
+            "name": label,
+            "itemStyle": {"color": "#ff0000" if label == "积极" else "#9E9E9E" if label == "中性" else "#0000ff"}
+        }
+        data.append(item)
+
+    option = {
+        "title": {
+            "text": "舆情情感分布",
+            "left": "center",
+            "textStyle": {"fontSize": 18},
+        },
+        "tooltip": {"trigger": "item"},
+        "legend": {
+            "orient": "vertical",
+            "left": "left",
+            "top": "middle",
+        },
+        "series": [
+            {
+                "type": "pie",
+                "radius": ["40%", "70%"],
+                "avoidLabelOverlap": True,
+                "itemStyle": {
+                    "borderRadius": 5,
+                    "borderColor": "#fff",
+                    "borderWidth": 2,
+                },
+                "label": {
+                    "formatter": "{b}: {d}%",
+                    "rich": {"fontSize": 14},
+                },
+                "emphasis": {
+                    "itemStyle": {"shadowBlur": 10},
+                    "label": {"show": True},
+                },
+                "data": data,
+            }
+        ],
+    }
+    return option
+
+# 生成情感趋势分析图
+def build_line_chart(df):
+    # 确保 "发布时间" 列存在
+    if "发布时间" not in df.columns:
+        st.warning("数据中没有发布时间列，无法生成情感趋势图。")
+        return {}
+    
+    # 转换时间为日期格式
+    df["发布时间"] = pd.to_datetime(df["发布时间"]).dt.date  # Ensure date type
+    
+    # 按天分组获取情感得分均值并填充缺失值
+    grouped = df.groupby("发布时间")
+    sentiment_trend = grouped["sentiment"].mean().reset_index()
+    
+    # 创建完整的日期范围
+    start_date = df["发布时间"].min()
+    end_date = df["发布时间"].max()
+    date_range = pd.date_range(start=start_date, end=end_date)
+    
+    # 创建新的 DataFrame 用于合并
+    sentiment_trend_display = pd.DataFrame({"时间": date_range.date})
+    
+    # 合并并填充缺失值
+    sentiment_trend_display = pd.merge(
+        sentiment_trend_display, 
+        sentiment_trend.rename(columns={"发布时间": "时间"}),
+        on="时间",
+        how="left"
+    ).fillna(0)  # 填充空缺值
+    
+    # 调整图表展示的时间间隔
+    delta = (end_date - start_date).days
+    if delta > 365:
+        freq = "M"  # 每月
+    elif delta > 30:
+        freq = "W"  # 每周
+    else:
+        freq = "D"  # 每天
+    
+    # 动态调整 x 轴标签间隔
+    interval = get_dynamic_interval(delta)
+    
+    option = {
+        "title": {
+            "text": "舆情情感趋势",
+            "left": "center",
+            "textStyle": {"fontSize": 18},
+        },
+        "tooltip": {"trigger": "axis"},
+        "xAxis": {
+            "type": "category",
+            "data": sentiment_trend_display["时间"].astype(str).tolist(),
+            "axisLabel": {
+                "rotate": 45,
+                "interval": interval,  # 动态间隔
+                "formatter": "{value}",
+            },
+            "boundaryGap": False,
+        },
+        "yAxis": {
+            "type": "value",
+            "name": "情感得分",
+            "min": 0,
+            "max": 1,
+        },
+        "series": [
+            {
+                "name": "情感得分",
+                "type": "line",
+                "data": sentiment_trend_display["sentiment"].tolist(),
+                "symbolSize": 8,
+                "smooth": True,
+                "itemStyle": {"color": "#4CAF50"},
+            }
+        ],
+    }
+    return option
+
+# 动态计算 x 轴标签间隔
+def get_dynamic_interval(delta):
+    if delta > 365:
+        return 30  # 每月显示一次
+    elif delta > 30:
+        return 7  # 每周显示一次
+    elif delta > 14:
+        return 3  # 每3天显示一次
+    else:
+        return 1  # 每天显示一次
+    
+def main():    
+    # 权限验证
+    if not st.session_state.get("logged_in"):
+        st.error("请先登录")
+        st.stop()
+
+    # 数据上传与初始化
+    if "data" not in st.session_state:
+        st.warning("请先上传文件")
+        st.stop()
+    else:
+        data = st.session_state.data.copy()
+
+    # 数据处理管道
+    data = process_data(data)
+    df = calculate_sentiment(data)
+
+    # 渲染图表
+    st.write("### 舆情情感分布可视化")
+    pie_chart_options = build_pie_chart(df)
+    ste.st_echarts(options=pie_chart_options, height="500px")
+
+    st.write("### 舆情情感趋势分析")
+    line_chart_options = build_line_chart(df)
+    ste.st_echarts(options=line_chart_options, height="500px")
+
+if __name__ == "__main__":
+    main()       
+
+import streamlit as st
+from pyecharts import options as opts
+from pyecharts.charts import Map
+import pandas as pd
+
+
+def count_provinces(df):
+    province_map = {
+        "江苏": "江苏省",
+        "浙江": "浙江省",
+        "安徽": "安徽省",
+        "福建": "福建省",
+        "江西": "江西省",
+        "山东": "山东省",
+        "河南": "河南省",
+        "湖北": "湖北省",
+        "湖南": "湖南省",
+        "广东": "广东省",
+        "广西": "广西壮族自治区",
+        "海南": "海南省",
+        "四川": "四川省",
+        "贵州": "贵州省",
+        "云南": "云南省",
+        "西藏": "西藏自治区",
+        "陕西": "陕西省",
+        "甘肃": "甘肃省",
+        "青海": "青海省",
+        "宁夏": "宁夏回族自治区",
+        "新疆": "新疆维吾尔自治区",
+        "北京": "北京市",
+        "天津": "天津市",
+        "上海": "上海市",
+        "重庆": "重庆市",
+        "香港": "香港特别行政区",
+        "澳门": "澳门特别行政区",
+        "台湾": "台湾省"
+    }
+
+    if 'ip' not in df.columns:
+        st.error("CSV 文件中没有名为 'ip' 的列。")
+        return []
+    
+    # 使用 .loc 确保操作在原始数据框上进行
+    df.loc[df['ip'].notna(), 'ip'] = df.loc[df['ip'].notna(), 'ip'].map(province_map)
+    
+    # 统计省份 IP 出现次数
+    province_counts = df['ip'].value_counts().reset_index()
+    province_counts.columns = ['省份', '次数']
+    
+    data = list(zip(province_counts['省份'], province_counts['次数']))
+    
+    if not data:
+        data = [["未记录", 0]]
+    
+    return data
+
+# 创建地图
+def create_china_map(data):
+    c = Map()
+    c.add("IP分布", data, "china")
+    c.set_global_opts(
+        title_opts=opts.TitleOpts(title="中国省份 IP 分布地图"),
+        visualmap_opts=opts.VisualMapOpts(max_=max([x[1] for x in data]) or 1)
+    )
+    c.set_series_opts(
+        label_opts=opts.LabelOpts(
+            is_show=True,
+            color="blue",
+            formatter="{b}: {c}"  # 显示省份名称和次数
+        )
+    )
+    return c
+
+# 主函数
+def main():
+    # 权限验证（所有子页面都需要添加）
+    if not st.session_state.get('logged_in'):
+        st.error("请先登录")
+        st.stop()  # 阻止继续加载
+    
+    # 检查是否已有上传的数据
+    if 'data' not in st.session_state:
+        st.warning("请先上传文件")
+        st.stop()  # 停止页面加载
+    
+    # 获取已上传的数据
+    data = st.session_state.data
+    
+    # 统计省份 IP 数据
+    province_data = count_provinces(data)
+    
+    # 创建地图
+    map_chart = create_china_map(province_data)
+    
+    # 显示地图
+    st.title("中国省份 IP 分布地图")
+    st.info("推荐使用夸克浏览器，其他浏览器打开可能存在显示问题")
+    st.components.v1.html(map_chart.render_embed(), height=800)
+
+if __name__ == "__main__":
+    main()
+
+import streamlit as st 
+from pyecharts import options as opts 
+from pyecharts.charts   import Bar, Pie 
+import pandas as pd 
+ 
+# 配置中文环境 
+def set_chinese(): 
+    return opts.InitOpts( 
+        theme="light",  # 内置主题支持中文 
+        animation_opts=opts.AnimationOpts(animation_threshold=2000), 
+        width="100%", 
+        height="600px" 
+    ) 
+ 
+# 生成柱状图 
+def create_bar(data) -> Bar: 
+    provinces = data.index.tolist()  
+    counts = data.values.tolist()  
+    
+    bar = ( 
+        Bar(init_opts=set_chinese()) 
+       .add_xaxis(provinces) 
+       .add_yaxis("舆情数量", counts) 
+       .set_global_opts( 
+            title_opts=opts.TitleOpts(title="各地舆情数量分布"), 
+            xaxis_opts=opts.AxisOpts( 
+                name="省份", 
+                axislabel_opts=opts.LabelOpts(rotate=45)  # 倾斜标签 
+            ), 
+            datazoom_opts=[opts.DataZoomOpts()]  # 添加滚动条 
+        ) 
+    ) 
+    return bar 
+ 
+# 生成饼图 
+def create_pie(data) -> Pie: 
+    pie = ( 
+        Pie(init_opts=set_chinese()) 
+       .add( 
+            "", 
+            [list(z) for z in zip(data.index.tolist(),   data.values.tolist())],  
+            radius=["30%", "75%"],  # 环形饼图 
+            rosetype="radius"  # 南丁格尔玫瑰图 
+        ) 
+       .set_global_opts( 
+            title_opts=opts.TitleOpts(title="舆情各地占比"), 
+            legend_opts=opts.LegendOpts(orient="vertical", pos_top="15%", pos_left="2%") 
+        ) 
+       .set_series_opts(label_opts=opts.LabelOpts(formatter="{{b}}: {{d}}%"))  # 百分比显示 
+    ) 
+    return pie 
+ 
+# 主程序 
+def main(): 
+    # 权限验证（所有子页面都需要添加） 
+    if not st.session_state.get('logged_in'):  
+        st.error("  请先登录") 
+        st.stop()    # 阻止继续加载 
+ 
+    if 'data' in st.session_state:  
+        data = st.session_state.data  
+        st.title("  舆情地域分布") 
+        data['ip'] = data['ip'].fillna('未知') 
+        province_counts = data['ip'].value_counts() 
+ 
+        # 移除双列布局 
+        st.markdown("###   舆情地区分布柱状图") 
+        st_pyecharts(create_bar(province_counts), height=500) 
+ 
+        st.markdown("###   舆情地区占比饼图") 
+        st_pyecharts(create_pie(province_counts), height=500) 
+    
+    else: 
+        st.warning(" 请先上传文件。") 
+ 
+if __name__ == "__main__": 
+    from streamlit_echarts import st_pyecharts  # 需要安装该扩展 
+    main() 
